@@ -29,6 +29,7 @@ public class MainActivity extends AppCompatActivity {
 
     // BluetoothAdapter is the core class that will allow us to manage Bluetooth on the device
     private BluetoothAdapter bluetoothAdapter;
+    private BluetoothLeScanner bleScanner;
 
     // Declare an ActivityResultLauncher to handle the result of the Bluetooth enabling request
     private final ActivityResultLauncher<Intent> enableBluetoothLauncher =
@@ -36,6 +37,7 @@ public class MainActivity extends AppCompatActivity {
                 if (result.getResultCode() == RESULT_OK) {
                     // If Bluetooth was enabled, show a success message
                     Toast.makeText(this, getString(R.string.bluetooth_enabled), Toast.LENGTH_SHORT).show();
+                    startBLEScan(); // Start scanning after Bluetooth is enabled
                 } else {
                     // If user declined, show a message that Bluetooth couldn't be enabled
                     Toast.makeText(this, getString(R.string.bluetooth_not_enabled), Toast.LENGTH_SHORT).show();
@@ -91,10 +93,31 @@ public class MainActivity extends AppCompatActivity {
             } else {
                 // If Bluetooth is already on, show a toast message
                 Toast.makeText(this, getString(R.string.bluetooth_already_on), Toast.LENGTH_SHORT).show();
+                startBLEScan(); // Directly start scanning if already enabled
             }
         } catch (SecurityException e) {
             // Handle the case where Bluetooth permissions might be missing or denied
             Toast.makeText(this, "Security Exception: Please grant Bluetooth permissions.", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void startBLEScan() {
+        bleScanner = bluetoothAdapter.getBluetoothLeScanner();
+        if (bleScanner != null) {
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
+                // TODO: Consider calling
+                //    ActivityCompat#requestPermissions
+                // here to request the missing permissions, and then overriding
+                //   public void onRequestPermissionsResult(int requestCode, String[] permissions,
+                //                                          int[] grantResults)
+                // to handle the case where the user grants the permission. See the documentation
+                // for ActivityCompat#requestPermissions for more details.
+                return;
+            }
+            bleScanner.startScan(scanCallback);
+            Toast.makeText(this, "BLE scanning started...", Toast.LENGTH_SHORT).show();
+        } else {
+            Toast.makeText(this, "BLE Scanner not available", Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -114,4 +137,29 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-}
+    // 👇 ScanCallback defined at the end for clarity
+    private final ScanCallback scanCallback = new ScanCallback() {
+        @Override
+        public void onScanResult(int callbackType, ScanResult result) {
+            super.onScanResult(callbackType, result);
+            if (ActivityCompat.checkSelfPermission(MainActivity.this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                return;
+            }
+
+            String deviceName = result.getDevice().getName();
+            String deviceAddress = result.getDevice().getAddress();
+            Log.d("BLE_SCAN", "Device found: " + deviceName + " [" + deviceAddress + "]");
+        }
+
+        @Override
+        public void onScanFailed(int errorCode) {
+            super.onScanFailed(errorCode);
+            Log.e("BLE_SCAN", "Scan failed with error code: " + errorCode);
+        }
+    };
+
+
+};
+
+
+
