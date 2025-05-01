@@ -8,6 +8,7 @@
         <string name="bluetooth_not_enabled">Bluetooth not enabled</string>
         <string name="location_permission_required">Location permission is required for BLE</string>
         <string name="Activate_BLE">Activate BLE</string>
+        <string name="Activate_BLE_Scan">Activate BLE Scan</string>
 
 
 </resources>
