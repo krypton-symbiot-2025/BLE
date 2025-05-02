@@ -1,7 +1,5 @@
 package com.example.ble;
 
-
-
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.bluetooth.BluetoothAdapter;
@@ -11,7 +9,6 @@ import android.bluetooth.le.AdvertiseData;
 import android.bluetooth.le.AdvertiseSettings;
 import android.bluetooth.le.BluetoothLeAdvertiser;
 import android.bluetooth.le.ScanCallback;
-import android.bluetooth.le.ScanFilter;
 import android.bluetooth.le.ScanResult;
 import android.bluetooth.le.ScanSettings;
 import android.content.pm.PackageManager;
@@ -23,20 +20,19 @@ import android.util.Log;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import androidx.annotation.RequiresApi;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
-import java.util.List;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 public class MainActivity extends AppCompatActivity {
     private static final String TAG = "BLEMesh";
-    private static final int REQUEST_ENABLE_BT = 1;
     private static final int REQUEST_PERMISSION_LOCATION = 2;
     private static final long SCAN_DURATION_MS = 10000;
     private static final long ADVERTISE_DURATION_MS = 10000;
@@ -49,6 +45,8 @@ public class MainActivity extends AppCompatActivity {
     private Map<String, Integer> rssiMap = new HashMap<>();
 
     private TextView statusText;
+    private Set<String> seenMessages = new HashSet<>();
+
 
     @SuppressLint("MissingPermission")
     @Override
@@ -69,14 +67,19 @@ public class MainActivity extends AppCompatActivity {
             bluetoothAdapter.enable();
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-                ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, REQUEST_PERMISSION_LOCATION);
-            }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            ActivityCompat.requestPermissions(this, new String[]{
+                    Manifest.permission.BLUETOOTH_SCAN,
+                    Manifest.permission.BLUETOOTH_ADVERTISE,
+                    Manifest.permission.BLUETOOTH_CONNECT,
+                    Manifest.permission.ACCESS_FINE_LOCATION
+            }, REQUEST_PERMISSION_LOCATION);
         }
 
         if (bluetoothAdapter.isMultipleAdvertisementSupported()) {
             advertiser = bluetoothAdapter.getBluetoothLeAdvertiser();
+        } else {
+            Log.e(TAG, "BLE Advertiser not supported on this device.");
         }
 
         startRoleSwitching();
@@ -121,18 +124,61 @@ public class MainActivity extends AppCompatActivity {
             int rssi = result.getRssi();
             rssiMap.put(device.getAddress(), rssi);
             Log.d(TAG, "Found device: " + device.getAddress() + " RSSI: " + rssi);
+
+            runOnUiThread(() -> statusText.append("\n" + device.getAddress() + " RSSI: " + rssi));
+
+            byte[] serviceData = null;
+            if (result.getScanRecord() != null) {
+                serviceData = result.getScanRecord().getServiceData(new ParcelUuid(SERVICE_UUID));
+            }
+            if (serviceData != null) {
+                parseReceivedData(serviceData);
+            }
         }
     };
+
+    private void parseReceivedData(byte[] data) {
+        if (data.length < 4) return;
+        String uuid = bytesToHex(Arrays.copyOfRange(data, 0, 4));
+        if (seenMessages.contains(uuid)) return;
+
+        seenMessages.add(uuid);  // Mark as seen
+
+        int index = 4;
+        while (index + 4 <= data.length) {
+            byte[] addrPart = Arrays.copyOfRange(data, index, index + 3);
+            int rssi = data[index + 3];
+            String macSuffix = bytesToHex(addrPart);
+            String fakeMac = "XX:XX:XX:" + macSuffix.substring(0, 2) + ":" + macSuffix.substring(2, 4) + ":" + macSuffix.substring(4);
+
+            rssiMap.put(fakeMac, rssi);
+            runOnUiThread(() -> statusText.append("\nRelayed: " + fakeMac + " RSSI: " + rssi));
+
+            index += 4;
+        }
+    }
+
+
+    private String bytesToHex(byte[] bytes) {
+        StringBuilder sb = new StringBuilder();
+        for (byte b : bytes) {
+            sb.append(String.format("%02X", b));
+        }
+        return sb.toString();
+    }
 
     @SuppressLint("MissingPermission")
     private void startAdvertising() {
         statusText.setText("Advertising...");
-        if (advertiser == null) return;
+        if (advertiser == null || !bluetoothAdapter.isEnabled()) {
+            Log.e(TAG, "Cannot advertise: advertiser is null or Bluetooth is off");
+            return;
+        }
 
         AdvertiseSettings settings = new AdvertiseSettings.Builder()
                 .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
                 .setConnectable(false)
-                .setTimeout(0)
+                .setTimeout((int) ADVERTISE_DURATION_MS)
                 .build();
 
         byte[] compressedData = compressData();
@@ -145,18 +191,33 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private byte[] compressData() {
-        ByteBuffer buffer = ByteBuffer.allocate(31);
+        ByteBuffer buffer = ByteBuffer.allocate(24); // enough for 3 relays
+
+        String uuid = generateUUID(); // 4-byte unique ID
+        buffer.put(hexStringToByteArray(uuid));
+
         for (Map.Entry<String, Integer> entry : rssiMap.entrySet()) {
-            if (buffer.remaining() < 7) break;
+            if (buffer.remaining() < 4) break;
             String address = entry.getKey().replace(":", "");
             int rssi = entry.getValue();
-            byte[] addrBytes = hexStringToByteArray(address.substring(6)); // last 3 bytes
-            buffer.put(addrBytes);
-            buffer.put((byte) rssi);
+            if (address.length() >= 12) {
+                byte[] addrBytes = hexStringToByteArray(address.substring(6));
+                if (addrBytes.length == 3) {
+                    buffer.put(addrBytes);
+                    buffer.put((byte) rssi);
+                }
+            }
         }
-        rssiMap.clear(); // clear after relaying
-        return buffer.array();
+
+        rssiMap.clear();
+        return Arrays.copyOf(buffer.array(), buffer.position());
     }
+
+    private String generateUUID() {
+        int uuid = (int) (System.currentTimeMillis() & 0xFFFFFFFF);
+        return String.format("%08X", uuid);
+    }
+
 
     private byte[] hexStringToByteArray(String s) {
         int len = s.length();
@@ -190,6 +251,7 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 }
+
 
 
 
