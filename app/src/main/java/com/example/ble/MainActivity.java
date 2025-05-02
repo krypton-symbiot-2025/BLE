@@ -46,6 +46,17 @@ public class MainActivity extends AppCompatActivity {
 
     private TextView statusText;
     private Set<String> seenMessages = new HashSet<>();
+    private int currentTxPowerIndex = 0;
+    private static final int[] TX_POWER_LEVELS = {
+            AdvertiseSettings.ADVERTISE_TX_POWER_ULTRA_LOW,
+            AdvertiseSettings.ADVERTISE_TX_POWER_LOW,
+            AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM,
+            AdvertiseSettings.ADVERTISE_TX_POWER_HIGH
+    };
+    private static final String[] TX_POWER_LABELS = {
+            "ULTRA_LOW", "LOW", "MEDIUM", "HIGH"
+    };
+
 
 
     @SuppressLint("MissingPermission")
@@ -169,14 +180,20 @@ public class MainActivity extends AppCompatActivity {
 
     @SuppressLint("MissingPermission")
     private void startAdvertising() {
-        statusText.setText("Advertising...");
         if (advertiser == null || !bluetoothAdapter.isEnabled()) {
             Log.e(TAG, "Cannot advertise: advertiser is null or Bluetooth is off");
             return;
         }
 
+        int txPower = TX_POWER_LEVELS[currentTxPowerIndex];
+        String txPowerLabel = TX_POWER_LABELS[currentTxPowerIndex];
+
+        statusText.setText("Advertising... Tx Power: " + txPowerLabel);
+        Log.d(TAG, "Advertising with Tx Power: " + txPowerLabel);
+
         AdvertiseSettings settings = new AdvertiseSettings.Builder()
                 .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
+                .setTxPowerLevel(txPower)
                 .setConnectable(false)
                 .setTimeout((int) ADVERTISE_DURATION_MS)
                 .build();
@@ -188,7 +205,11 @@ public class MainActivity extends AppCompatActivity {
                 .build();
 
         advertiser.startAdvertising(settings, data, advertiseCallback);
+
+        // Cycle to next power level for next round
+        currentTxPowerIndex = (currentTxPowerIndex + 1) % TX_POWER_LEVELS.length;
     }
+
 
     private byte[] compressData() {
         ByteBuffer buffer = ByteBuffer.allocate(24); // enough for 3 relays
