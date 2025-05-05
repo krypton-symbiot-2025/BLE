@@ -1,27 +1,46 @@
 <?xml version="1.0" encoding="utf-8"?>
 <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root_layout"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:padding="16dp">
 
-    <!-- Status text (e.g., "Scanning...", "Advertising...") -->
     <TextView
         android:id="@+id/status_text"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Status"
+        android:textSize="18sp" />
+
+    <Button
+        android:id="@+id/pause_button"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Pause"
+        android:layout_below="@id/status_text"
+        android:layout_marginTop="8dp" />
+
+    <Button
+        android:id="@+id/resume_button"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Resume"
+        android:layout_below="@id/pause_button"
+        android:layout_marginTop="8dp" />
+
+    <ScrollView
+        android:id="@+id/scroll_view"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Status: Idle"
-        android:textAppearance="?android:textAppearanceMedium"
-        android:padding="16dp"
-        android:layout_alignParentTop="true" />
+        android:layout_below="@id/resume_button"
+        android:layout_marginTop="16dp"
+        android:layout_alignParentBottom="true"
+        android:fillViewport="true">
 
-    <!-- Nearby devices text, placed below status_text -->
-    <TextView
-        android:id="@+id/devices_text"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Nearby Devices:\n"
-        android:textAppearance="?android:textAppearanceMedium"
-        android:padding="16dp"
-        android:layout_below="@id/status_text" />
-
+        <LinearLayout
+            android:id="@+id/advertiser_list"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+    </ScrollView>
 </RelativeLayout>
-

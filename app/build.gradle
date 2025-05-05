@@ -6,11 +6,11 @@ plugins {
 
 android {
     namespace 'com.example.ble'
-    compileSdk 34
+    compileSdk 35
 
     defaultConfig {
         applicationId "com.example.ble"
-        minSdk 24
+        minSdk 21
         targetSdk 34
         versionCode 1
         versionName "1.0"
@@ -47,7 +47,8 @@ dependencies {
     implementation libs.androidx.ui.tooling.preview
     implementation libs.androidx.material3
     //implementation libs.androidx.appcompat
-    implementation 'androidx.appcompat:appcompat:1.7.0' // or the latest
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation libs.androidx.recyclerview// or the latest
 
     testImplementation libs.junit
     androidTestImplementation libs.androidx.junit

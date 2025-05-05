@@ -30,6 +30,8 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.nio.charset.StandardCharsets;
+
 
 public class MainActivity extends AppCompatActivity {
     private static final String TAG = "BLEMesh";
@@ -47,6 +49,9 @@ public class MainActivity extends AppCompatActivity {
     private TextView statusText;
     private Set<String> seenMessages = new HashSet<>();
     private int currentTxPowerIndex = 0;
+
+    private Map<String, String> devicePayloadMap = new HashMap<>();
+
     private static final int[] TX_POWER_LEVELS = {
             AdvertiseSettings.ADVERTISE_TX_POWER_ULTRA_LOW,
             AdvertiseSettings.ADVERTISE_TX_POWER_LOW,
@@ -149,13 +154,21 @@ public class MainActivity extends AppCompatActivity {
     };
 
     private void parseReceivedData(byte[] data) {
-        if (data.length < 4) return;
+        if (data.length < 5) return;
+
         String uuid = bytesToHex(Arrays.copyOfRange(data, 0, 4));
         if (seenMessages.contains(uuid)) return;
-
-        seenMessages.add(uuid);  // Mark as seen
+        seenMessages.add(uuid);  // Avoid flooding
 
         int index = 4;
+        int nameLen = data[index++] & 0xFF;
+
+        if (index + nameLen > data.length) return;
+        String deviceName = new String(Arrays.copyOfRange(data, index, index + nameLen), StandardCharsets.UTF_8);
+        index += nameLen;
+
+        runOnUiThread(() -> statusText.append("\nFrom: " + deviceName + " [UUID: " + uuid + "]"));
+
         while (index + 4 <= data.length) {
             byte[] addrPart = Arrays.copyOfRange(data, index, index + 3);
             int rssi = data[index + 3];
@@ -164,7 +177,6 @@ public class MainActivity extends AppCompatActivity {
 
             rssiMap.put(fakeMac, rssi);
             runOnUiThread(() -> statusText.append("\nRelayed: " + fakeMac + " RSSI: " + rssi));
-
             index += 4;
         }
     }
@@ -212,11 +224,23 @@ public class MainActivity extends AppCompatActivity {
 
 
     private byte[] compressData() {
-        ByteBuffer buffer = ByteBuffer.allocate(24); // enough for 3 relays
+        @SuppressLint("MissingPermission") byte[] nameBytes = bluetoothAdapter.getName().getBytes(StandardCharsets.UTF_8);
+        if (nameBytes.length > 8) {
+            nameBytes = Arrays.copyOf(nameBytes, 8);  // Trim to 8 bytes
+        }
+        int nameLength = nameBytes.length;
 
-        String uuid = generateUUID(); // 4-byte unique ID
+        ByteBuffer buffer = ByteBuffer.allocate(4 + 1 + nameLength + (rssiMap.size() * 4));
+
+        // Add UUID (4 bytes)
+        String uuid = generateUUID();
         buffer.put(hexStringToByteArray(uuid));
 
+        // Add device name
+        buffer.put((byte) nameLength);
+        buffer.put(nameBytes);
+
+        // Add RSSI relays
         for (Map.Entry<String, Integer> entry : rssiMap.entrySet()) {
             if (buffer.remaining() < 4) break;
             String address = entry.getKey().replace(":", "");
