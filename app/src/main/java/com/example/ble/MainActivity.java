@@ -16,6 +16,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.ParcelUuid;
+import android.text.TextUtils;
 import android.util.Log;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -51,6 +52,9 @@ public class MainActivity extends AppCompatActivity {
     private int currentTxPowerIndex = 0;
 
     private Map<String, String> devicePayloadMap = new HashMap<>();
+
+
+    private Map<String, Integer> deviceLineMap = new HashMap<>(); // Tracks line index in statusText
 
     private static final int[] TX_POWER_LEVELS = {
             AdvertiseSettings.ADVERTISE_TX_POWER_ULTRA_LOW,
@@ -124,31 +128,62 @@ public class MainActivity extends AppCompatActivity {
     @SuppressLint("MissingPermission")
     private void startScanning() {
         statusText.setText("Scanning...");
+        deviceLineMap.clear();
         bluetoothAdapter.getBluetoothLeScanner().startScan(scanCallback);
     }
 
     @SuppressLint("MissingPermission")
     private void stopScanning() {
         statusText.setText("Stopped Scanning");
+        deviceLineMap.clear();
         bluetoothAdapter.getBluetoothLeScanner().stopScan(scanCallback);
     }
 
     private final ScanCallback scanCallback = new ScanCallback() {
-        @Override
         public void onScanResult(int callbackType, ScanResult result) {
             BluetoothDevice device = result.getDevice();
+            String mac = device.getAddress();
             int rssi = result.getRssi();
-            rssiMap.put(device.getAddress(), rssi);
-            Log.d(TAG, "Found device: " + device.getAddress() + " RSSI: " + rssi);
-
-            runOnUiThread(() -> statusText.append("\n" + device.getAddress() + " RSSI: " + rssi));
 
             byte[] serviceData = null;
             if (result.getScanRecord() != null) {
                 serviceData = result.getScanRecord().getServiceData(new ParcelUuid(SERVICE_UUID));
             }
+
+            String payloadHex = (serviceData != null) ? bytesToHex(serviceData) : "";
+
+            boolean rssiChanged = !rssiMap.containsKey(mac) || Math.abs(rssiMap.get(mac) - rssi) > 1;
+            boolean payloadChanged = !devicePayloadMap.containsKey(mac) || !devicePayloadMap.get(mac).equals(payloadHex);
+
+            if (rssiChanged || payloadChanged) {
+                rssiMap.put(mac, rssi);
+                devicePayloadMap.put(mac, payloadHex);
+
+                String updatedLine = mac + " RSSI: " + rssi;
+                Log.d(TAG, "Updated device: " + updatedLine);
+
+                runOnUiThread(() -> {
+                    String[] lines = statusText.getText().toString().split("\n");
+
+                    int index = deviceLineMap.containsKey(mac) ? deviceLineMap.get(mac) : -1;
+
+
+                    if (index >= 0 && index < lines.length) {
+                        lines[index] = updatedLine;
+                    } else {
+                        index = lines.length;
+                        lines = Arrays.copyOf(lines, index + 1);
+                        lines[index] = updatedLine;
+                        deviceLineMap.put(mac, index);
+                    }
+
+                    statusText.setText(TextUtils.join("\n", lines));
+                });
+
+            }
+
             if (serviceData != null) {
-                parseReceivedData(serviceData);
+                parseReceivedData(serviceData); // handles relayed devices
             }
         }
     };
@@ -162,12 +197,13 @@ public class MainActivity extends AppCompatActivity {
 
         int index = 4;
         int nameLen = data[index++] & 0xFF;
-
         if (index + nameLen > data.length) return;
+
         String deviceName = new String(Arrays.copyOfRange(data, index, index + nameLen), StandardCharsets.UTF_8);
         index += nameLen;
 
-        runOnUiThread(() -> statusText.append("\nFrom: " + deviceName + " [UUID: " + uuid + "]"));
+        String fromLine = "From: " + deviceName + " [UUID: " + uuid + "]";
+        runOnUiThread(() -> appendOrUpdateLine(uuid, fromLine));
 
         while (index + 4 <= data.length) {
             byte[] addrPart = Arrays.copyOfRange(data, index, index + 3);
@@ -175,11 +211,14 @@ public class MainActivity extends AppCompatActivity {
             String macSuffix = bytesToHex(addrPart);
             String fakeMac = "XX:XX:XX:" + macSuffix.substring(0, 2) + ":" + macSuffix.substring(2, 4) + ":" + macSuffix.substring(4);
 
-            rssiMap.put(fakeMac, rssi);
-            runOnUiThread(() -> statusText.append("\nRelayed: " + fakeMac + " RSSI: " + rssi));
+            rssiMap.put(fakeMac, (int) rssi);
+            String relayedLine = "Relayed: " + fakeMac + " RSSI: " + rssi;
+            runOnUiThread(() -> appendOrUpdateLine(fakeMac, relayedLine));
+
             index += 4;
         }
     }
+
 
 
     private String bytesToHex(byte[] bytes) {
@@ -201,6 +240,7 @@ public class MainActivity extends AppCompatActivity {
         String txPowerLabel = TX_POWER_LABELS[currentTxPowerIndex];
 
         statusText.setText("Advertising... Tx Power: " + txPowerLabel);
+        deviceLineMap.clear();
         Log.d(TAG, "Advertising with Tx Power: " + txPowerLabel);
 
         AdvertiseSettings settings = new AdvertiseSettings.Builder()
@@ -295,6 +335,25 @@ public class MainActivity extends AppCompatActivity {
             advertiser.stopAdvertising(advertiseCallback);
         }
     }
+    private void appendOrUpdateLine(String key, String newLine) {
+        String text = statusText.getText().toString();
+        String[] lines = text.isEmpty() ? new String[0] : text.split("\n");
+
+        int idx = deviceLineMap.containsKey(key) ? deviceLineMap.get(key) : -1;
+
+        if (idx >= 0 && idx < lines.length) {
+            lines[idx] = newLine;
+        } else {
+            // Append new line
+            lines = Arrays.copyOf(lines, lines.length + 1);
+            lines[lines.length - 1] = newLine;
+            deviceLineMap.put(key, lines.length - 1);
+        }
+
+        statusText.setText(android.text.TextUtils.join("\n", lines));
+    }
+
+
 }
 
 
