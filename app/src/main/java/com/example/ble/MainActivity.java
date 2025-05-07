@@ -32,6 +32,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.nio.charset.StandardCharsets;
+import java.io.ByteArrayOutputStream;
+
 
 
 public class MainActivity extends AppCompatActivity {
@@ -52,6 +54,12 @@ public class MainActivity extends AppCompatActivity {
     private int currentTxPowerIndex = 0;
 
     private Map<String, String> devicePayloadMap = new HashMap<>();
+
+    private static final int MAX_NAME_LENGTH = 8;
+    private static final int UUID_LENGTH = 2; // bytes
+    private static final int RELAY_ENTRY_SIZE = 4; // 3-byte MAC suffix + 1 RSSI
+    private static final byte DISTRESS_FLAG = (byte) 0xFF;
+
 
 
     private Map<String, Integer> deviceLineMap = new HashMap<>(); // Tracks line index in statusText
@@ -189,14 +197,24 @@ public class MainActivity extends AppCompatActivity {
     };
 
     private void parseReceivedData(byte[] data) {
-        if (data.length < 5) return;
+        if (data.length < 3) return;
 
-        String uuid = bytesToHex(Arrays.copyOfRange(data, 0, 4));
+        String uuid = bytesToHex(Arrays.copyOfRange(data, 0, UUID_LENGTH)); // UUID_LENGTH = 2
         if (seenMessages.contains(uuid)) return;
-        seenMessages.add(uuid);  // Avoid flooding
+        seenMessages.add(uuid);
 
-        int index = 4;
-        int nameLen = data[index++] & 0xFF;
+        int index = UUID_LENGTH;
+        byte header = data[index++];
+
+        // Check distress-only flag
+        if (header == DISTRESS_FLAG) {
+            String distressLine = "⚠️ Distress UUID: " + uuid;
+            runOnUiThread(() -> appendOrUpdateLine(uuid, distressLine));
+            return;
+        }
+
+        // Normal payload
+        int nameLen = header & 0xFF;
         if (index + nameLen > data.length) return;
 
         String deviceName = new String(Arrays.copyOfRange(data, index, index + nameLen), StandardCharsets.UTF_8);
@@ -218,6 +236,8 @@ public class MainActivity extends AppCompatActivity {
             index += 4;
         }
     }
+
+
 
 
 
@@ -263,33 +283,54 @@ public class MainActivity extends AppCompatActivity {
     }
 
 
+    @SuppressLint("MissingPermission")
     private byte[] compressData() {
-        @SuppressLint("MissingPermission") byte[] nameBytes = bluetoothAdapter.getName().getBytes(StandardCharsets.UTF_8);
-        if (nameBytes.length > 8) {
-            nameBytes = Arrays.copyOf(nameBytes, 8);  // Trim to 8 bytes
+        String uuidHex = generateUUID();
+        byte[] uuidBytes = hexStringToByteArray(uuidHex); // 2 bytes
+
+        boolean distressOnly = isInDistress(); // Your custom condition
+
+        int nameLength = 0;
+        byte[] nameBytes = new byte[0];
+
+        if (!distressOnly) {
+            nameBytes = bluetoothAdapter.getName().getBytes(StandardCharsets.UTF_8);
+            if (nameBytes.length > MAX_NAME_LENGTH) {
+                nameBytes = Arrays.copyOf(nameBytes, MAX_NAME_LENGTH);
+            }
+            nameLength = nameBytes.length;
         }
-        int nameLength = nameBytes.length;
 
-        ByteBuffer buffer = ByteBuffer.allocate(4 + 1 + nameLength + (rssiMap.size() * 4));
+        int maxRelayCount = (23 - UUID_LENGTH - (distressOnly ? 1 : (1 + nameLength))) / RELAY_ENTRY_SIZE;
+        int relayBytes = 0;
 
-        // Add UUID (4 bytes)
-        String uuid = generateUUID();
-        buffer.put(hexStringToByteArray(uuid));
+        for (String mac : rssiMap.keySet()) {
+            if (relayBytes + RELAY_ENTRY_SIZE > maxRelayCount * RELAY_ENTRY_SIZE) break;
+            relayBytes += RELAY_ENTRY_SIZE;
+        }
 
-        // Add device name
-        buffer.put((byte) nameLength);
-        buffer.put(nameBytes);
+        ByteBuffer buffer = ByteBuffer.allocate(UUID_LENGTH + (distressOnly ? 1 : (1 + nameLength + relayBytes)));
 
-        // Add RSSI relays
-        for (Map.Entry<String, Integer> entry : rssiMap.entrySet()) {
-            if (buffer.remaining() < 4) break;
-            String address = entry.getKey().replace(":", "");
-            int rssi = entry.getValue();
-            if (address.length() >= 12) {
-                byte[] addrBytes = hexStringToByteArray(address.substring(6));
-                if (addrBytes.length == 3) {
-                    buffer.put(addrBytes);
-                    buffer.put((byte) rssi);
+        buffer.put(uuidBytes, 0, UUID_LENGTH);
+
+        if (distressOnly) {
+            buffer.put(DISTRESS_FLAG);
+        } else {
+            buffer.put((byte) nameLength);
+            buffer.put(nameBytes);
+
+            int count = 0;
+            for (Map.Entry<String, Integer> entry : rssiMap.entrySet()) {
+                if (count >= maxRelayCount) break;
+                String address = entry.getKey().replace(":", "");
+                int rssi = entry.getValue();
+                if (address.length() >= 12) {
+                    byte[] suffix = hexStringToByteArray(address.substring(6));
+                    if (suffix.length == 3) {
+                        buffer.put(suffix);
+                        buffer.put((byte) rssi);
+                        count++;
+                    }
                 }
             }
         }
@@ -298,10 +339,13 @@ public class MainActivity extends AppCompatActivity {
         return Arrays.copyOf(buffer.array(), buffer.position());
     }
 
+
+
     private String generateUUID() {
-        int uuid = (int) (System.currentTimeMillis() & 0xFFFFFFFF);
-        return String.format("%08X", uuid);
+        int uuid = (int) (System.currentTimeMillis() & 0xFFFF);
+        return String.format("%04X", uuid); // 2-byte UUID in hex
     }
+
 
 
     private byte[] hexStringToByteArray(String s) {
@@ -351,6 +395,9 @@ public class MainActivity extends AppCompatActivity {
         }
 
         statusText.setText(android.text.TextUtils.join("\n", lines));
+    }
+    private boolean isInDistress() {
+        return false; // or use a variable, e.g., distressModeEnabled
     }
 
 
